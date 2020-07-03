@@ -1,0 +1,52 @@
+修改Ignition有两种方法，第一种是通过base64转换想要注入的内容文件，然后将转换后的内容手工注入到Ignition对应的位置，这种方法较为繁琐，容易出错，这里我们不进行介绍。
+第二种方法是借助于filetranspile工具实现配置修改。
+我们首先在一台RHEL主机上安装filetranspile工具，这个工具的运行安装python，我先将RHEL上安装Python的步骤写出：
+#subscription-manager register
+#subscription-manager list --available
+#subscription-manager attach --pool=8a85f99c6c2a4252016c3b86a6e130e4
+#subscription-manager repos --enable rhel-7-server-optional-rpms --enable rhel-server-rhscl-7-rpms
+#yum -y install python36 python-pip rh-python36-PyYAML
+#scl enable rh-python36 bash
+下面步骤是安装Python后，安装filetranspile的步骤。
+#curl -o filetranspile https://raw.githubusercontent.com/ashcrow/filetranspiler/master/filetranspile
+#chmod +x filetranspile
+#cp filetranspile /usr/bin/
+
+接下来，我们展示在OpenShift安装之前，如何通过filetranspile修改ignition的配置：
+首先创建manifests并生在pre-install目录中成ignition配置，如下面步骤所示：
+[root@repo html]# openshift-install create manifests --dir pre-install/
+[root@repo html]# openshift-install create ignition-configs --dir=pre-install
+
+切换到pre-install目录，查看生成的文件，此时ign文件是没有定制化配置的。
+[root@repo html]# cd pre-install/
+[root@repo pre-install]# ls
+auth  bootstrap.ign  master.ign  metadata.json  rhcos-4.3.0-x86_64-metal.raw.gz  worker.ign
+接下来，我们创建目录，先为master0创建：
+[root@repo pre-install]# mkdir -p master0/etc/sysconfig/network-scripts
+在进行下面步骤之前，首先要通过CoreOS引导宿主机启动（虚拟机或者物理机），查看系统启动默认的网卡名（如ens33）名称，记录下来。
+然后在目录中创建网卡配置文件，如下所示配置相应的网络相关的参数：
+[root@repo pre-install]# cat << EOF > master0/etc/sysconfig/network-scripts/ifcfg-ens33
+TYPE=Ethernet
+BOOTPROTO=none
+NAME=ens33
+DEVICE=ens33
+ONBOOT=yes
+IPADDR=192.168.137.203
+NETMASK=255.255.255.0
+GATEWAY=192.168.137.2
+DOMAIN=ocp4.example.com
+DNS1=192.168.137.202
+EOF
+
+接下来，创建DNS服务器配置文件，如下所示：
+[root@repo pre-install]# cat << EOF > master0/etc/resolv.conf
+nameserver 192.168.137.202
+EOF
+
+配置主机名文件：
+[root@repo pre-install]# cat << EOF > master0/etc/hostname
+master-0.ocp4.example.com
+EOF
+然后利用filetranspile工具，以原始master.ign为蓝本，以上面书写的配置文件为参数注入，生成定制化的master0-static.ign文件。
+[root@repo pre-install]# filetranspile -i master.ign -f master0 -o master0-static.ign
+我们用同样的方法，生成master1-static.ign、master2-static.ign文件，以及Worker节点的配置ign文件，如worker0-static.ign、master1-static.ign、master2-static.ign等。然后进行OpenShift安装，配置就可以被注入到CoreOS中了。
