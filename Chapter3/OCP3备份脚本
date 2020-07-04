@@ -1,0 +1,31 @@
+
+备份namespace的命令，以myproject为例。
+# PROJECR=myproject
+# oc get --export -o=json ns/${PROJECR} | jq '
+    del(.status,
+      .metadata.uid,
+      .metadata.selfLink,
+      .metadata.resourceVersion,
+      .metadata.creationTimestamp,
+      .metadata.generation
+      )' > ${PROJECR}-ns.json
+      
+      
+备份deploymentconfig的命令，以myproject为例。
+# PROJECT=myproject
+# DCS=$(oc get dc -n ${PROJECT} -o jsonpath="{.items[*].metadata.name}")
+# for dc in ${DCS}; do
+    oc get --export -o=json dc ${dc} -n ${PROJECT} | jq '
+      del(.status,
+          .metadata.uid,
+          .metadata.selfLink,
+          .metadata.resourceVersion,
+          .metadata.creationTimestamp,
+          .metadata.generation,
+          .spec.triggers[].imageChangeParams.lastTriggeredImage
+          )' > ${PROJECT}/dc_${dc}.json 
+if [ !$(cat ${PROJECT}/dc_${dc}.json | jq '.spec.triggers[].type' | grep -q "ImageChange") ]; then
+        sed -e 's#"image".*#"image": " ",#g' ${PROJECT}/dc_${dc}.json >> ${PROJECT}/dc_${dc}_patched.json
+        rm -rf ${PROJECT}/dc_${dc}.json
+    fi
+done
