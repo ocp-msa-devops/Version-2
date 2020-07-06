@@ -1,0 +1,67 @@
+STATIC PREDICATES
+These predicates do not take any configuration parameters or inputs from the user. These are specified in the scheduler configuration using their exact name.
+
+Default Predicates
+The default scheduler policy includes the following predicates:
+
+NoVolumeZoneConflict checks that the volumes a pod requests are available in the zone.
+
+
+{"name" : "NoVolumeZoneConflict"}
+MaxEBSVolumeCount checks the maximum number of volumes that can be attached to an AWS instance.
+
+
+{"name" : "MaxEBSVolumeCount"}
+MaxAzureDiskVolumeCount checks the maximum number of Azure Disk Volumes.
+
+
+{"name" : "MaxAzureDiskVolumeCount"}
+PodToleratesNodeTaints checks if a pod can tolerate the node taints.
+
+
+{"name" : "PodToleratesNodeTaints"}
+CheckNodeUnschedulable checks if a pod can be scheduled on a node with Unschedulable spec.
+
+
+{"name" : "CheckNodeUnschedulable"}
+CheckVolumeBinding evaluates if a pod can fit based on the volumes, it requests, for both bound and unbound PVCs. * For PVCs that are bound, the predicate checks that the corresponding PV’s node affinity is satisfied by the given node. * For PVCs that are unbound, the predicate searched for available PVs that can satisfy the PVC requirements and that the PV node affinity is satisfied by the given node.
+
+The predicate returns true if all bound PVCs have compatible PVs with the node, and if all unbound PVCs can be matched with an available and node-compatible PV.
+
+
+{"name" : "CheckVolumeBinding"}
+NoDiskConflict checks if the volume requested by a pod is available.
+
+
+{"name" : "NoDiskConflict"}
+MaxGCEPDVolumeCount checks the maximum number of Google Compute Engine (GCE) Persistent Disks (PD).
+
+
+{"name" : "MaxGCEPDVolumeCount"}
+MaxCSIVolumeCountPred
+
+MatchInterPodAffinity checks if the pod affinity/anti-affinity rules permit the pod.
+
+
+{"name" : "MatchInterPodAffinity"}
+Other Static Predicates
+OpenShift Container Platform also supports the following predicates:
+
+The CheckNode-* predicates cannot be used if the Taint Nodes By Condition feature is enabled. The Taint Nodes By Condition feature is enabled by default.
+
+CheckNodeCondition checks if a pod can be scheduled on a node reporting out of disk, network unavailable, or not ready conditions.
+
+
+{"name" : "CheckNodeCondition"}
+CheckNodeLabelPresence checks if all of the specified labels exist on a node, regardless of their value.
+
+
+{"name" : "CheckNodeLabelPresence"}
+checkServiceAffinity checks that ServiceAffinity labels are homogeneous for pods that are scheduled on a node.
+
+
+{"name" : "checkServiceAffinity"}
+PodToleratesNodeNoExecuteTaints checks if a pod tolerations can tolerate a node NoExecute taints.
+
+
+{"name" : "PodToleratesNodeNoExecuteTaints"}
