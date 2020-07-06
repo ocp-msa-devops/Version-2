@@ -1,3 +1,4 @@
+https://docs.openshift.com/container-platform/4.1/networking/openshift_sdn/assigning-egress-ips.html
 使用egress IP为项目分配一个固定出口IP
 $ oc patch netnamespace project1 --type=merge -p \
   '{"egressIPs": ["192.168.1.100"]}'
