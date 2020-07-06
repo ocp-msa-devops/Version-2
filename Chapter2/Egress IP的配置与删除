@@ -1,0 +1,16 @@
+使用egress IP为项目分配一个固定出口IP
+$ oc patch netnamespace project1 --type=merge -p \
+  '{"egressIPs": ["192.168.1.100"]}'
+
+指定了egress ip后，需要指定这些IP可以从哪个节点出去：
+oc patch hostsubnet worker-0 --type=merge -p \ '{"egressIPs": ["192.168.1.100", "192.168.1.101", "192.168.1.102"]}'
+
+使用自动分配egress IP的方式，是不是把出口的IP段分给所以节点，以后只要配置项目的出口IP，不用分配出口节点了
+$ oc patch hostsubnet worker-0 --type=merge -p \
+  '{"egressCIDRs": ["192.168.1.0/24"]}'
+
+
+删除namespace的Egress IP
+ oc patch --type=merge netnamespace project1 -p '{"egressIPs":[]}'     
+ 删除节点的hostsubnet
+ oc patch --type=merge hostsubnet worker-0 -p '{"egressCIDRs":[]}'
