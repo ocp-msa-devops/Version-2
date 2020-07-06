@@ -38,3 +38,20 @@ NodePreferAvoidPodsPriority ignores pods that are owned by a controller other th
 
 
 {"name" : "NodePreferAvoidPodsPriority", "weight" : 10000}
+
+
+Other Static Priorities
+OpenShift Container Platform also supports the following priorities:
+
+EqualPriority gives an equal weight of 1 to all nodes, if no priority configurations are provided. We recommend using this priority only for testing environments.
+
+
+{"name" : "EqualPriority", "weight" : 1}
+MostRequestedPriority prioritizes nodes with most requested resources. It calculates the percentage of memory and CPU requested by pods scheduled on the node, and prioritizes based on the maximum of the average of the fraction of requested to capacity.
+
+
+{"name" : "MostRequestedPriority", "weight" : 1}
+ServiceSpreadingPriority spreads pods by minimizing the number of pods belonging to the same service onto the same machine.
+
+
+{"name" : "ServiceSpreadingPriority", "weight" : 1}
