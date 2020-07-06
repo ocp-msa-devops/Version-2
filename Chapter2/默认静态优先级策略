@@ -1,0 +1,40 @@
+STATIC PRIORITIES
+Static priorities do not take any configuration parameters from the user, except weight. A weight is required to be specified and cannot be 0 or negative.
+
+These are specified in the scheduler policy Configmap in the openshift-config project.
+
+Default Priorities
+The default scheduler policy includes the following priorities. Each of the priority function has a weight of 1 except NodePreferAvoidPodsPriority, which has a weight of 10000.
+
+NodeAffinityPriority prioritizes nodes according to node affinity scheduling preferences
+
+
+{"name" : "NodeAffinityPriority", "weight" : 1}
+TaintTolerationPriority prioritizes nodes that have a fewer number of intolerable taints on them for a pod. An intolerable taint is one which has key PreferNoSchedule.
+
+
+{"name" : "TaintTolerationPriority", "weight" : 1}
+ImageLocalityPriority prioritizes nodes that already have requested pod container’s images.
+
+
+{"name" : "ImageLocalityPriority", "weight" : 1}
+SelectorSpreadPriority looks for services, replication controllers (RC), replication sets (RS), and stateful sets that match the pod, then finds existing pods that match those selectors. The scheduler favors nodes that have fewer existing matching pods. Then, it schedules the pod on a node with the smallest number of pods that match those selectors as the pod being scheduled.
+
+
+{"name" : "SelectorSpreadPriority", "weight" : 1}
+InterPodAffinityPriority computes a sum by iterating through the elements of weightedPodAffinityTerm and adding weight to the sum if the corresponding PodAffinityTerm is satisfied for that node. The node(s) with the highest sum are the most preferred.
+
+
+{"name" : "InterPodAffinityPriority", "weight" : 1}
+LeastRequestedPriority favors nodes with fewer requested resources. It calculates the percentage of memory and CPU requested by pods scheduled on the node, and prioritizes nodes that have the highest available/remaining capacity.
+
+
+{"name" : "LeastRequestedPriority", "weight" : 1}
+BalancedResourceAllocation favors nodes with balanced resource usage rate. It calculates the difference between the consumed CPU and memory as a fraction of capacity, and prioritizes the nodes based on how close the two metrics are to each other. This should always be used together with LeastRequestedPriority.
+
+
+{"name" : "BalancedResourceAllocation", "weight" : 1}
+NodePreferAvoidPodsPriority ignores pods that are owned by a controller other than a replication controller.
+
+
+{"name" : "NodePreferAvoidPodsPriority", "weight" : 10000}
