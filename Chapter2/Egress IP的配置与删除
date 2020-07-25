@@ -1,3 +1,6 @@
+在OCP3时代，我们可以通过：配置Egress Router、Egress IP、出口防火墙三种模式实现pod出口IP的固定。实际上常用的是前两种。Egress Router比Egress IP的方式的好处是，它除了可以设置pod的出口IP，还能设置pod的destination IP。缺点是这种配置比较复杂，而且无法自动实现高可用（需要部署两个Egress Router）​。Egress Router的方式，在OCP4已经不提了，或者说已经不用了。
+因此在OCP4时代，配置pod的Egress固定IP，使用Egress IP即可。它配置肩简单、自带（节点）高可。
+
 https://docs.openshift.com/container-platform/4.1/networking/openshift_sdn/assigning-egress-ips.html
 使用egress IP为项目分配一个固定出口IP
 $ oc patch netnamespace project1 --type=merge -p \
@@ -6,7 +9,7 @@ $ oc patch netnamespace project1 --type=merge -p \
 指定了egress ip后，需要指定这些IP可以从哪个节点出去：
 oc patch hostsubnet worker-0 --type=merge -p \ '{"egressIPs": ["192.168.1.100", "192.168.1.101", "192.168.1.102"]}'
 
-使用自动分配egress IP的方式，是不是把出口的IP段分给所以节点，以后只要配置项目的出口IP，不用分配出口节点了
+也可以给节点直接分配Egress IP所在的网段，这样随着Egress IP的增加，也不用频繁修改节点的配置了。
 $ oc patch hostsubnet worker-0 --type=merge -p \
   '{"egressCIDRs": ["192.168.1.0/24"]}'
 
