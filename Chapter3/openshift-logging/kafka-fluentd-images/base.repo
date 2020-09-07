@@ -1,0 +1,11 @@
+[base]
+name=base
+baseurl=http://192.168.1.250:8080/rhel-7-server-rpms
+enabled=1
+gpgcheck=0
+#pacth contains only ruby-devel
+[patch]
+name=patch
+baseurl=http://192.168.1.259:8080/patch
+enabled=1
+gpgcheck=0
