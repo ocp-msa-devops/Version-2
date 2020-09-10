@@ -1,0 +1,172 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+labels:
+  template: myapp-eap72-no-trigger
+metadata:
+  annotations:
+    description: An example EAP 7 application for myapp.
+    iconClass: icon-eap
+    openshift.io/display-name: Myapp EAP 7.2 no trigger
+    tags: eap,javaee,java,jboss
+    template.openshift.io/long-description: This template defines resources needed to develop myapp.
+    version: "1.0"
+  name: myapp-eap72-no-trigger
+objects:
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    labels:
+      application: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      description: The web server's http port.
+    labels:
+      application: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}
+  spec:
+    ports:
+    - port: 8080
+      targetPort: 8080
+    selector:
+      deploymentConfig: ${APPLICATION_NAME}
+- apiVersion: v1
+  id: ${APPLICATION_NAME}-http
+  kind: Route
+  metadata:
+    annotations:
+      description: Route for application's http service.
+    labels:
+      application: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}
+  spec:
+    to:
+      name: ${APPLICATION_NAME}
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    labels:
+      application: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}
+  spec:
+    output:
+      to:
+        kind: ImageStreamTag
+        name: ${APPLICATION_NAME}:latest
+    source:
+      git:
+        ref: ${SOURCE_REF}
+        uri: ${SOURCE_URL}
+      type: Git
+    strategy:
+      sourceStrategy:
+        forcePull: true
+        from:
+          kind: ImageStreamTag
+          name: jboss-eap72-openshift:1.1
+          namespace: openshift
+      type: Source
+    triggers:
+    - github:
+        secret: kJZLvfQr3hZg
+      type: GitHub
+    - generic:
+        secret: kJZLvfQr3hZg
+      type: Generic
+    - imageChange: {}
+      type: ImageChange
+    - type: ConfigChange
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    labels:
+      application: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}
+  spec:
+    replicas: 1
+    selector:
+      deploymentConfig: ${APPLICATION_NAME}
+    strategy:
+      resources: {}
+      rollingParams:
+        intervalSeconds: 1
+        maxSurge: 25%
+        maxUnavailable: 25%
+        timeoutSeconds: 600
+        updatePeriodSeconds: 1
+      type: Rolling
+    template:
+      metadata:
+        labels:
+          application: ${APPLICATION_NAME}
+          deploymentConfig: ${APPLICATION_NAME}
+        name: ${APPLICATION_NAME}
+      spec:
+        containers:
+        - env:
+            - name: JGROUPS_PING_PROTOCOL
+              value: dns.DNS_PING
+            - name: OPENSHIFT_DNS_PING_SERVICE_NAME
+              value: myapp-ping
+            - name: OPENSHIFT_DNS_PING_SERVICE_PORT
+              value: '8888'
+            - name: MQ_CLUSTER_PASSWORD
+              value: mlrFWyAF
+            - name: MQ_QUEUES
+            - name: MQ_TOPICS
+            - name: JGROUPS_CLUSTER_PASSWORD
+              value: qaxNJoaK
+            - name: AUTO_DEPLOY_EXPLODED
+              value: 'false'
+          image: image-registry.openshift-image-registry.svc:5000/myapp/${APPLICATION_NAME}:latest
+          imagePullPolicy: Always
+          livenessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - '-c'
+                - /opt/eap/bin/livenessProbe.sh
+            initialDelaySeconds: 60
+            timeoutSeconds: 1
+            periodSeconds: 10
+            successThreshold: 1
+            failureThreshold: 3
+          name: ${APPLICATION_NAME}
+          ports:
+          - containerPort: 8778
+            name: jolokia
+            protocol: TCP
+          - containerPort: 8080
+            name: http
+            protocol: TCP
+          - containerPort: 8888
+            name: ping
+            protocol: TCP
+          readinessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - '-c'
+                - /opt/eap/bin/readinessProbe.sh false
+            initialDelaySeconds: 10
+            timeoutSeconds: 1
+            periodSeconds: 10
+            successThreshold: 1
+            failureThreshold: 3
+        terminationGracePeriodSeconds: 60
+    triggers:
+    - type: ConfigChange
+parameters:
+- description: The name for the application.
+  name: APPLICATION_NAME
+  required: true
+  value: myapp-no-trigger
+- description: Git source URI for application
+  name: SOURCE_URL
+  required: true
+  value: https://github.com/ocp-msa-devops/openshift-tasks.git
+- description: Git branch/tag reference
+  name: SOURCE_REF
+  value: eap-7
