@@ -1,0 +1,153 @@
+apiVersion: v1
+kind: Template
+labels:
+  template: bluegreen-deploy-template
+message: A Jenkins server will be automatically instantiated in this project to manage
+  the Pipeline BuildConfig created by this template.  You will be able to log in to
+  it using your OpenShift user credentials.
+metadata:
+  annotations:
+    description: This example showcases a blue green deployment using a Jenkins pipeline
+      that pauses for approval.
+    iconClass: icon-jenkins
+    tags: instant-app,jenkins
+  creationTimestamp: null
+  name: bluegreen-deploy-pipeline
+objects:
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    name: ${NAME}
+  spec:
+    dockerImageRepository: ${IMAGE_NAME}
+- apiVersion: v1
+  kind: Route
+  metadata:
+    name: blue-${NAME}
+  spec:
+    to:
+      kind: Service
+      name: ${NAME}-blue
+- apiVersion: v1
+  kind: Route
+  metadata:
+    name: green-${NAME}
+  spec:
+    to:
+      kind: Service
+      name: ${NAME}-green
+- apiVersion: v1
+  kind: Route
+  metadata:
+    name: ${NAME}
+  spec:
+    alternateBackends:
+    - name: ${NAME}-blue
+      weight: 0
+    to:
+      kind: Service
+      name: ${NAME}-green
+      weight: 100
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: ${NAME}-blue
+  spec:
+    ports:
+    - name: web
+      port: 8080
+      targetPort: 8080
+    selector:
+      name: ${NAME}-blue
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    annotations:
+      description: Deploy the blue application.
+    name: ${NAME}-blue
+  spec:
+    replicas: 1
+    selector:
+      name: ${NAME}-blue
+    strategy:
+      type: Rolling
+    template:
+      metadata:
+        labels:
+          name: ${NAME}-blue
+        name: ${NAME}-blue
+      spec:
+        containers:
+        - image: ' '
+          name: jboss-tasks
+          ports:
+          - containerPort: 8080
+    triggers:
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - jboss-tasks
+        from:
+          kind: ImageStreamTag
+          name: ${NAME}:blue
+      type: ImageChange
+    - type: ConfigChange
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: ${NAME}-green
+  spec:
+    ports:
+    - name: web
+      port: 8080
+      targetPort: 8080
+    selector:
+      name: ${NAME}-green
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    annotations:
+      description: Deploy the application green.
+    name: ${NAME}-green
+  spec:
+    replicas: 1
+    selector:
+      name: ${NAME}-green
+    strategy:
+      type: Rolling
+    template:
+      metadata:
+        labels:
+          name: ${NAME}-green
+        name: ${NAME}-green
+      spec:
+        containers:
+        - image: ' '
+          name: jboss-tasks
+          ports:
+          - containerPort: 8080
+    triggers:
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - jboss-tasks
+        from:
+          kind: ImageStreamTag
+          name: ${NAME}:green
+      type: ImageChange
+    - type: ConfigChange
+parameters:
+- description: The name assigned to all of the frontend objects defined in this template.
+  displayName: Name
+  name: NAME
+  required: true
+  value: jboss-tasks
+- description: The exposed hostname that will route to the Node.js service, if left
+    blank a value will be defaulted.
+  displayName: Application Hostname
+  name: APPLICATION_DOMAIN
+- description: Which image you want to deploy.
+  displayName: Release Image Name
+  name: IMAGE_NAME
+  required: true
+  value: registry.example.com/myapp/jboss-tasks
