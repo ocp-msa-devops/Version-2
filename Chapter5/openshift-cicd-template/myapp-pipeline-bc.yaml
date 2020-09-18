@@ -1,0 +1,25 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  labels:
+    name: myapp-pipeline
+  name: myapp-pipeline
+spec:
+  strategy:
+    jenkinsPipelineStrategy:
+      jenkinsfile: |-
+        node('maven') {
+            stage 'build'
+            openshiftBuild(buildConfig: 'myapp-no-trigger', showBuildLogs: 'true')
+
+            stage 'deploy'
+            openshiftDeploy(deploymentConfig: 'myapp-no-trigger')
+        }
+    type: JenkinsPipeline
+  triggers:
+  - github:
+      secret: CzgPZAZ5m2
+    type: GitHub
+  - generic:
+      secret: CzgPZAZ5m2
+    type: Generic

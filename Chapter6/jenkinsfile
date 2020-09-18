@@ -1,0 +1,177 @@
+// define git info
+def gitlab_url = 'http://192.168.1.251/yuejun/openshift-tasks.git'
+def gitlab_credentialsId = 'gitlab-yuejun'
+def gitlab_branch = "release"
+
+// define openshift project name
+def project_name = 'myapp-sit'
+// define application service name
+def service_name = "jboss-tasks"
+// define target path
+def target_path = 'target'
+// define target name
+def target_name = 'openshift-tasks.war'
+// define maven commands
+def mvnCmd = 'mvn -s configuration/cicd-settings.xml'
+// define sonar host url
+def sonar_url = 'http://192.168.1.249:9000'
+// define sonar project key
+def sonar_project_key = "myapp:jboss-tasks"
+
+pipeline {
+  agent {
+    label 'maven'
+  }
+  options {
+  timeout(time:2, unit: 'HOURS')
+  }
+stages {
+  stage('Pull Source') {
+    steps {
+      git branch: "${gitlab_branch}", credentialsId: "${gitlab_credentialsId}", url: "${gitlab_url}"
+	  }
+  }
+  stage('Build Package') {
+    steps {
+      sh "${mvnCmd} clean install -DskipTests=true"
+    }
+  }
+  stage('JUnit Test') {
+    steps {
+      sh "${mvnCmd} test"
+      step([$class: 'JUnitResultArchiver', testResults: '**/target/surefire-reports/TEST-*.xml'])
+    }
+  }
+  stage('Code Analysis') {
+    steps {
+       withSonarQubeEnv('sonarqube5.6.6') {
+         sh "${mvnCmd} jacoco:report sonar:sonar -Dsonar.branch=${gitlab_branch} -Dsonar.projectKey=${sonar_project_key} -DskipTests=true"
+         }
+    }
+  }
+  stage("Check Quality Gate") {
+    steps {
+      script {
+            timeout(time: 300, unit: 'SECONDS') {
+              def qg = waitForQualityGate()
+              if (qg.status != 'OK') {
+                  error "Pipeline aborted due to quality gate failure: ${qg.status}"
+              }
+            }
+      }
+    }
+  }
+  stage('Archive App') {
+    steps {
+	    sh "${mvnCmd} deploy -DskipTests=true -P nexus3"
+	  }
+  }
+  stage('Create Image Builder') {
+    when {
+        expression {
+            openshift.withCluster() {
+                openshift.withProject("${project_name}") {
+                    return !openshift.selector("bc", "${service_name}").exists();
+                }
+            }
+        }
+    }
+    steps {
+        script {
+            openshift.withCluster() {
+                openshift.withProject("${project_name}") {
+                    openshift.newBuild("--name=${service_name}", "--image-stream=openshift/jboss-eap64-openshift", "--binary=true")
+                }
+            }
+        }
+    }
+  }
+  stage('Build Image') {
+    steps {
+      sh "rm -rf oc-build && mkdir -p oc-build/deployments"
+      sh "cp ${target_path}/${target_name} oc-build/deployments/"
+      script {
+        openshift.withCluster() {
+          openshift.withProject("${project_name}") {
+            openshift.selector("bc", "${service_name}").startBuild("--from-dir=oc-build", "--wait=true")
+          }
+        }
+      }
+    }
+  }
+  stage('Develop APP') {
+    steps {
+        script {
+            openshift.withCluster() {
+                openshift.withProject("${project_name}") {
+                    if (!openshift.selector('dc', "${service_name}").exists()) {
+                        def app = openshift.newApp("${service_name}:latest")
+                        def dc = openshift.selector("dc", "${service_name}")
+                        while (dc.object().spec.replicas != dc.object().status.availableReplicas) {
+                            sleep 10
+                        }
+                        openshift.set("triggers", "dc/${service_name}", "--manual")
+                        app.narrow("svc").delete();
+                        dc.expose("--port=8080");
+                        app.narrow("svc").expose("--port=8080")
+                    } else {
+                        openshift.selector("dc", "${service_name}").rollout().latest();
+                    }
+                }
+            }
+        }
+    }
+  }
+  stage('Automatic Testing') {
+    steps {
+      script {
+        sh 'echo starting Automatic Testing.'
+        // add something test.
+      }
+    }
+  }
+}
+
+post {
+  success{
+    emailext (
+        attachLog: false,
+        attachmentsPattern: '',
+        body: """
+        <h1>Jenkins构建信息</h1>
+        <b>项目名称：</b>${env.JOB_NAME}<br/>
+        <b>构建编号：</b>#${env.BUILD_NUMBER}<br/>
+        <b>构建状态：</b><span style="color:green">SUCCESS</span><br/>
+        <b>Jenkins链接：</b><a href="${env.BUILD_URL}">${env.BUILD_URL}</a><br/>
+        <h1>Sonar扫描结果</h1>
+        <b>Sonar链接：</b><a href="${sonar_url}/dashboard/index/${sonar_project_key}:${gitlab_branch}">${sonar_url}/dashboard/index/${sonar_project_key}:${gitlab_branch}</a><br/>
+        """,
+        recipientProviders: [[$class: 'DevelopersRecipientProvider'], [$class: 'RequesterRecipientProvider']],
+        subject: '[RELEASE-JENKINS]: ${PROJECT_NAME} - Build #${BUILD_NUMBER} - SUCCESS!',
+        to: 'developer-manager@example.com,tester@example.com'
+    )
+  }
+  failure{
+    emailext (
+        attachLog: false,
+        attachmentsPattern: '',
+        body: """
+        <h1>Jenkins构建信息</h1>
+        <b>项目名称：</b>${env.JOB_NAME}<br/>
+        <b>构建编号：</b>#${env.BUILD_NUMBER}<br/>
+        <b>构建状态：</b><span style="color:red">FAILED</span><br/>
+        <b>Jenkins链接：</b><a href="${env.BUILD_URL}">${env.BUILD_URL}</a>
+        <h1>Sonar扫描结果</h1>
+        <b>Sonar链接：</b><a href="${sonar_url}/dashboard/index/${sonar_project_key}:${gitlab_branch}">${sonar_url}/dashboard/index/${sonar_project_key}:${gitlab_branch}</a><br/>
+        """,
+        recipientProviders: [[$class: 'DevelopersRecipientProvider'], [$class: 'RequesterRecipientProvider']],
+        subject: '[RELEASE-JENKINS]: ${PROJECT_NAME} - Build #${BUILD_NUMBER} - FAILED!',
+        to: 'developer-manager@example.com'
+    )
+  }
+  unstable{
+    //add something you want
+    sh 'echo "nothing"'
+  }
+}
+}

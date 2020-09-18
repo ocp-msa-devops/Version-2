@@ -1,0 +1,350 @@
+# This file is the fluentd configuration entrypoint. Edit with care.
+# 关于两个动态配置的生成阅读/opt/app-root/src目录下的脚本。
+#@include configs.d/openshift/system.conf
+<system>
+  log_level warn
+</system>
+
+# In each section below, pre- and post- includes don't include anything initially;
+# they exist to enable future additions to openshift conf as needed.
+
+## sources
+## ordered so that syslog always runs last...
+#@include configs.d/openshift/input-pre-*.conf
+#暂时删除了prometheus相关的采集，也就是input-pre-prometheus-metrics.conf中的内容
+<source>   #通过journal采集节点操作系统日志和docker配置为--log-driver=journald下的容器日志。
+  @type systemd
+  @id systemd-input
+  @label @INGRESS
+  path "#{ENV['JOURNAL_SOURCE'] || '/run/log/journal'}"
+  pos_file "#{ENV['JOURNAL_POS_FILE'] || '/var/log/journal.pos'}"
+  filters "#{ENV['JOURNAL_FILTERS_JSON'] || '[]'}"
+  tag journal
+  read_from_head "#{ENV['JOURNAL_READ_FROM_HEAD'] || 'false'}"
+</source>
+#@include configs.d/dynamic/input-docker-*.conf
+<source>     #通过/var/log/container采集容器标准输出日志。只有当docker配置为--log-driver=json-file才会从这里采集,默认的--log-driver=journald不会生成此配置。。
+  @type tail
+  @id docker-input
+  @label @INGRESS
+  path "/var/log/containers/*.log"
+  pos_file "/var/log/es-containers.log.pos"
+  time_format %Y-%m-%dT%H:%M:%S.%N%Z
+  tag kubernetes.*
+  format json
+  keep_time_key true
+  read_from_head "true"
+  exclude_path []
+  @label @CONCAT
+</source>
+<label @CONCAT>
+  <filter kubernetes.**>
+    @type concat
+    key log
+    partial_key logtag
+    partial_value P
+  </filter>
+  <match kubernetes.**>
+    @type relabel
+    @label @INGRESS
+  </match>
+</label>
+#@include configs.d/dynamic/input-syslog-*.conf
+#@include configs.d/openshift/input-post-*.conf
+##
+
+<label @INGRESS>
+## filters
+#@include configs.d/openshift/filter-pre-*.conf
+
+#@include configs.d/openshift/filter-retag-journal.conf
+# journal entries from k8s containers look like this:
+# The stream identification is encoded into the PRIORITY field as an
+# integer: 6, or github.com/coreos/go-systemd/journal.Info, marks stdout,
+# while 3, or github.com/coreos/go-systemd/journal.Err, marks stderr.
+# PRIORITY=6
+# CONTAINER_ID=b6cbb6e73c0a
+# CONTAINER_ID_FULL=b6cbb6e73c0ad63ab820e4baa97cdc77cec729930e38a714826764ac0491341a
+# CONTAINER_NAME=k8s_registry.a49f5318_docker-registry-1-hhoj0_default_ae3a9bdc-1f66-11e6-80a2-fa163e2fff3a_799e4035
+# MESSAGE=172.17.0.1 - - [21/May/2016:16:52:05 +0000] "GET /healthz HTTP/1.1" 200 0 "" "Go-http-client/1.1"
+# or
+# MESSAGE=time="2016-05-21T15:14:17.216966675Z" level=info msg="version=v2.1.0+unknown"
+# docker inspect:
+# "io.kubernetes.container.hash": "a49f5318",
+# "io.kubernetes.container.name": "registry",
+# "io.kubernetes.pod.name": "docker-registry-1-hhoj0",
+# "io.kubernetes.pod.namespace": "default",
+# "io.kubernetes.pod.terminationGracePeriod": "30",
+# "io.kubernetes.pod.uid": "ae3a9bdc-1f66-11e6-80a2-fa163e2fff3a",
+# docker ps:
+# da531d7cea12 172.30.38.242:5000/logging/logging-elasticsearch@sha256:4888a2a3f875555a46d233f9856964a8eaac716259599db0062051ba5647187e   "sh /opt/app-root/src"   About an hour ago   Up About an hour
+# k8s_elasticsearch.8d3af8fd_logging-es-ops-gkfv06wi-1-7y682_logging_9612f891-1f68-11e6-80a2-fa163e2fff3a_d1cc32e1
+# oc get pods -o yaml:
+#      kubernetes.io/created-by: |
+# {"name":"logging-es-ops-gkfv06wi-1","uid":"92d90581-1f68-11e6-80a2-fa163e2fff3a","apiVersion":"v1","resourceVersion":"829"}}
+# openshift.io/deployment-config.name: logging-es-ops-gkfv06wi
+# openshift.io/deployment.name: logging-es-ops-gkfv06wi-1
+# uid: 9612f891-1f68-11e6-80a2-fa163e2fff3a
+# image: 172.30.38.242:5000/logging/logging-elasticsearch@sha256:4888a2a3f875555a46d233f9856964a8eaac716259599db0062051ba5647187e
+# containerStatuses:
+#  - containerID: docker://da531d7cea12bf714f90c26d0fb9f275b02321d1bccd10013f087be33f4e6e5e
+#    image: 172.30.38.242:5000/logging/logging-elasticsearch@sha256:4888a2a3f875555a46d233f9856964a8eaac716259599db0062051ba5647187e
+#    imageID: docker://sha256:d5a02bf63b1f3e0d1aa06bf28928e181f67ab2c80b2a1d1fd1ba310f11c12955
+# another example:
+# CONTAINER_NAME=k8s_bob.94e110c7_bob-iq0d4_default_2d67916a-1eac-11e6-94ba-001c42e13e5d_8b4b7e3d
+# From this, we can extract:
+#    container name in pod: bob
+#    pod name: bob-iq0d4
+#    namespace: default
+#    pod uid: 2d67916a-1eac-11e6-94ba-001c42e13e5d
+
+# in addition, there are a few other differences about /var/log/messages and journal messages
+# * the default rsyslog.conf on el7 will only log messages to /var/log/messages at INFO level
+#   or higher
+# * the default rsyslog.d includes 21-cloudinit.conf which redirects all cloud-init messages
+#   to /var/log/cloud-init.log
+#   When using the journal, we keep the cloud-init messages and store
+#   them in elasticsearch.  But we filter out DEBUG messages.
+#   We should revisit this at a later date, when we have a good grasp of the storage
+#   requirements, so we can turn on this firehose.
+
+@include filter-exclude-journal-debug.conf
+<match journal>
+  @type rewrite_tag_filter
+  # skip to @INGRESS label section
+  @label @INGRESS
+  # see if this is a kibana container for special log handling
+  # looks like this:
+  # k8s_kibana.a67f366_logging-kibana-1-d90e3_logging_26c51a61-2835-11e6-ad29-fa163e4944d5_f0db49a2
+  # we filter these logs through the kibana_transform.conf filter
+  rewriterule1 CONTAINER_NAME ^k8s_kibana\. kubernetes.journal.container.kibana
+  # mark eventrouter events
+  rewriterule2 CONTAINER_NAME ^k8s_[^_]+_logging-eventrouter-[^_]+_ kubernetes.journal.container._default_.kubernetes-event
+  # mark logs from default namespace for processing as k8s logs but stored as system logs
+  rewriterule3 CONTAINER_NAME ^k8s_[^_]+_[^_]+_default_ kubernetes.journal.container._default_
+  # mark logs from kube-* namespaces for processing as k8s logs but stored as system logs
+  rewriterule4 CONTAINER_NAME ^k8s_[^_]+_[^_]+_kube-(.+)_ kubernetes.journal.container._kube-$1_
+  # mark logs from openshift-* namespaces for processing as k8s logs but stored as system logs
+  rewriterule5 CONTAINER_NAME ^k8s_[^_]+_[^_]+_openshift-(.+)_ kubernetes.journal.container._openshift-$1_
+  # mark logs from openshift namespace for processing as k8s logs but stored as system logs
+  rewriterule6 CONTAINER_NAME ^k8s_[^_]+_[^_]+_openshift_ kubernetes.journal.container._openshift_
+  # mark fluentd container logs
+  rewriterule7 CONTAINER_NAME ^k8s_.*fluentd kubernetes.journal.container.fluentd
+  # this is a kubernetes container
+  rewriterule8 CONTAINER_NAME ^k8s_ kubernetes.journal.container
+  # not kubernetes - assume a system log or system container log
+  rewriterule9 _TRANSPORT .+ journal.system
+</match>
+
+#@include configs.d/openshift/filter-k8s-meta.conf
+<filter kubernetes.**>
+  type kubernetes_metadata
+  kubernetes_url "#{ENV['K8S_HOST_URL']}"
+  cache_size "#{ENV['K8S_METADATA_CACHE_SIZE'] || '1000'}"
+  watch "#{ENV['K8S_METADATA_WATCH'] || 'false'}"
+  bearer_token_file /var/run/secrets/kubernetes.io/serviceaccount/token
+  ca_file /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+  use_journal "#{ENV['USE_JOURNAL'] || 'false'}"
+  container_name_to_kubernetes_regexp '^(?<name_prefix>[^_]+)_(?<container_name>[^\._]+)(\.(?<container_hash>[^_]+))?_(?<pod_name>[^_]+)_(?<namespace>[^_]+)_[^_]+_[^_]+$'
+</filter>
+
+<filter kubernetes.**>
+  @type parse_json_field
+  merge_json_log "#{ENV['MERGE_JSON_LOG'] || 'false'}"
+  preserve_json_log "#{ENV['PRESERVE_JSON_LOG'] || 'true'}"
+  json_fields "#{ENV['JSON_FIELDS'] || (ENV['USE_JOURNAL'] == 'true' ? 'MESSAGE,log' : 'log,MESSAGE')}"
+</filter>
+
+#@include configs.d/openshift/filter-kibana-transform.conf
+<filter **kibana**>
+  @type record_transformer
+  enable_ruby
+  <record>
+    log ${record['err'] || record['msg'] || record['MESSAGE'] || record['log']}
+  </record>
+  remove_keys req,res,msg,name,level,v,pid,err
+</filter>
+
+#@include configs.d/openshift/filter-k8s-flatten-hash.conf
+#@include configs.d/openshift/filter-k8s-record-transform.conf
+#@include configs.d/openshift/filter-syslog-record-transform.conf
+#@include configs.d/openshift/filter-viaq-data-model.conf
+<filter **>
+  @type viaq_data_model
+  process_kubernetes_events false
+  default_keep_fields CEE,docker,file,geoip,hostname,kubernetes,level,message,offset,pid,pipeline_metadata,rsyslog,service,systemd,tags,time,ovirt,collectd,tlog,aushape,namespace_name,namespace_uuid
+  extra_keep_fields "#{ENV['CDM_EXTRA_KEEP_FIELDS'] || ''}"
+  keep_empty_fields "#{ENV['CDM_KEEP_EMPTY_FIELDS'] || 'message'}"
+  use_undefined "#{ENV['CDM_USE_UNDEFINED'] || false}"
+  undefined_name "#{ENV['CDM_UNDEFINED_NAME'] || 'undefined'}"
+  rename_time "#{ENV['CDM_RENAME_TIME'] || true}"
+  rename_time_if_missing "#{ENV['CDM_RENAME_TIME_IF_MISSING'] || false}"
+  src_time_name "#{ENV['CDM_SRC_TIME_NAME'] || 'time'}"
+  dest_time_name "#{ENV['CDM_DEST_TIME_NAME'] || '@timestamp'}"
+  pipeline_type "#{ENV['PIPELINE_TYPE'] || 'collector'}"
+  <formatter>
+    enabled false
+    tag "audit.log**"
+    type sys_var_log
+  </formatter>
+  <formatter>
+    # already processed - just do index_name
+    enabled false
+    tag "**mux"
+    # type doesn't matter because it will be skipped
+    type sys_var_log
+  </formatter>
+  <formatter>
+    tag "system.var.log**"
+    type sys_var_log
+    remove_keys host,pid,ident
+  </formatter>
+  <formatter>
+    tag "journal.system**"
+    type sys_journal
+    remove_keys log,stream,MESSAGE,_SOURCE_REALTIME_TIMESTAMP,__REALTIME_TIMESTAMP,CONTAINER_ID,CONTAINER_ID_FULL,CONTAINER_NAME,PRIORITY,_BOOT_ID,_CAP_EFFECTIVE,_CMDLINE,_COMM,_EXE,_GID,_HOSTNAME,_MACHINE_ID,_PID,_SELINUX_CONTEXT,_SYSTEMD_CGROUP,_SYSTEMD_SLICE,_SYSTEMD_UNIT,_TRANSPORT,_UID,_AUDIT_LOGINUID,_AUDIT_SESSION,_SYSTEMD_OWNER_UID,_SYSTEMD_SESSION,_SYSTEMD_USER_UNIT,CODE_FILE,CODE_FUNCTION,CODE_LINE,ERRNO,MESSAGE_ID,RESULT,UNIT,_KERNEL_DEVICE,_KERNEL_SUBSYSTEM,_UDEV_SYSNAME,_UDEV_DEVNODE,_UDEV_DEVLINK,SYSLOG_FACILITY,SYSLOG_IDENTIFIER,SYSLOG_PID
+  </formatter>
+  <formatter>
+    tag "kubernetes.journal.container**"
+    type k8s_journal
+    remove_keys "#{ENV['K8S_FILTER_REMOVE_KEYS'] || 'log,stream,MESSAGE,_SOURCE_REALTIME_TIMESTAMP,__REALTIME_TIMESTAMP,CONTAINER_ID,CONTAINER_ID_FULL,CONTAINER_NAME,PRIORITY,_BOOT_ID,_CAP_EFFECTIVE,_CMDLINE,_COMM,_EXE,_GID,_HOSTNAME,_MACHINE_ID,_PID,_SELINUX_CONTEXT,_SYSTEMD_CGROUP,_SYSTEMD_SLICE,_SYSTEMD_UNIT,_TRANSPORT,_UID,_AUDIT_LOGINUID,_AUDIT_SESSION,_SYSTEMD_OWNER_UID,_SYSTEMD_SESSION,_SYSTEMD_USER_UNIT,CODE_FILE,CODE_FUNCTION,CODE_LINE,ERRNO,MESSAGE_ID,RESULT,UNIT,_KERNEL_DEVICE,_KERNEL_SUBSYSTEM,_UDEV_SYSNAME,_UDEV_DEVNODE,_UDEV_DEVLINK,SYSLOG_FACILITY,SYSLOG_IDENTIFIER,SYSLOG_PID'}"
+  </formatter>
+  <formatter>
+    tag "kubernetes.var.log.containers**"
+    type k8s_json_file
+    remove_keys log,stream,CONTAINER_ID_FULL,CONTAINER_NAME
+  </formatter>
+  <elasticsearch_index_name>
+    enabled "#{ENV['ENABLE_ES_INDEX_NAME'] || 'true'}"
+    tag "journal.system** system.var.log** audit.log**  **_default_** **_openshift_** **_openshift-*_** **_kube-*_**"
+    name_type operations_full
+  </elasticsearch_index_name>
+  <elasticsearch_index_name>
+    enabled "#{ENV['ENABLE_ES_INDEX_NAME'] || 'true'}"
+    tag "**"
+    name_type project_full
+  </elasticsearch_index_name>
+</filter>
+
+#@include configs.d/openshift/filter-post-*.conf
+# generate ids at source mitigate creating duplicate records
+# requires fluent-plugin-elasticsearch
+<filter **>
+  @type elasticsearch_genid_ext
+  hash_id_key viaq_msg_id
+  alt_key kubernetes.event.metadata.uid
+  alt_tags "#{ENV['GENID_ALT_TAG'] || 'kubernetes.var.log.containers.logging-eventrouter-*.** kubernetes.journal.container._default_.kubernetes-event'}"
+</filter>
+<match mux.** **.fluentd>
+  @type relabel
+  @label @OUTPUT
+</match>
+
+<match **>
+  @type rewrite_tag_filter
+  @label @OUTPUT
+  rewriterule1 message .+ output_tag
+  rewriterule2 message !.+ output_tag
+</match>
+##
+</label>
+
+<label @OUTPUT>
+## matches
+#@include configs.d/openshift/output-pre-*.conf
+#@include configs.d/openshift/output-operations.conf
+#@include configs.d/openshift/output-applications.conf
+<match retry_es>
+   @type copy
+   #@include output-es-retry.conf
+   <store>
+     @type elasticsearch
+     host "#{ENV['ES_HOST']}"
+     port "#{ENV['ES_PORT']}"
+     scheme https
+     ssl_version TLSv1_2
+     target_index_key viaq_index_name
+     id_key viaq_msg_id
+     remove_keys viaq_index_name
+     user fluentd
+     password changeme
+
+     client_key "#{ENV['ES_CLIENT_KEY']}"
+     client_cert "#{ENV['ES_CLIENT_CERT']}"
+     ca_file "#{ENV['ES_CA']}"
+
+     type_name com.redhat.viaq.common
+
+     reload_connections "#{ENV['ES_RELOAD_CONNECTIONS'] || 'true'}"
+     # https://github.com/uken/fluent-plugin-elasticsearch#reload-after
+     reload_after "#{ENV['ES_RELOAD_AFTER'] || '200'}"
+     # https://github.com/uken/fluent-plugin-elasticsearch#sniffer-class-name
+     sniffer_class_name "#{ENV['ES_SNIFFER_CLASS_NAME'] || 'Fluent::ElasticsearchSimpleSniffer'}"
+     reload_on_failure false
+     flush_interval "#{ENV['ES_FLUSH_INTERVAL'] || '1s'}"
+     max_retry_wait "#{ENV['ES_RETRY_WAIT'] || '300'}"
+     disable_retry_limit true
+     buffer_type file
+     buffer_path '/var/lib/fluentd/es-retry'
+     buffer_queue_limit "#{ENV['BUFFER_QUEUE_LIMIT'] || '32' }"
+     buffer_chunk_limit "#{ENV['BUFFER_SIZE_LIMIT'] || '8m' }"
+     buffer_queue_full_action "#{ENV['BUFFER_QUEUE_FULL_ACTION'] || 'block'}"
+     flush_at_shutdown "#{ENV['FLUSH_AT_SHUTDOWN'] || 'false'}"
+
+     write_operation 'create'
+
+     # 2 ^ 31
+     request_timeout 2147483648
+   </store>
+</match>
+<match **>
+   @type copy
+   #@include output-es-config.conf
+   <store>
+     @type elasticsearch
+     @id elasticsearch-apps
+     host "#{ENV['ES_HOST']}"
+     port "#{ENV['ES_PORT']}"
+     scheme https
+     ssl_version TLSv1_2
+     target_index_key viaq_index_name
+     id_key viaq_msg_id
+     remove_keys viaq_index_name
+     user fluentd
+     password changeme
+
+     client_key "#{ENV['ES_CLIENT_KEY']}"
+     client_cert "#{ENV['ES_CLIENT_CERT']}"
+     ca_file "#{ENV['ES_CA']}"
+
+     type_name com.redhat.viaq.common
+     retry_tag "retry_es"
+
+     reload_connections "#{ENV['ES_RELOAD_CONNECTIONS'] || 'true'}"
+     # https://github.com/uken/fluent-plugin-elasticsearch#reload-after
+     reload_after "#{ENV['ES_RELOAD_AFTER'] || '200'}"
+     # https://github.com/uken/fluent-plugin-elasticsearch#sniffer-class-name
+     sniffer_class_name "#{ENV['ES_SNIFFER_CLASS_NAME'] || 'Fluent::ElasticsearchSimpleSniffer'}"
+     reload_on_failure false
+     flush_interval "#{ENV['ES_FLUSH_INTERVAL'] || '1s'}"
+     max_retry_wait "#{ENV['ES_RETRY_WAIT'] || '300'}"
+     disable_retry_limit true
+     buffer_type file
+     buffer_path '/var/lib/fluentd/buffer-output-es-config'
+     buffer_queue_limit "#{ENV['BUFFER_QUEUE_LIMIT'] || '32' }"
+     buffer_chunk_limit "#{ENV['BUFFER_SIZE_LIMIT'] || '8m' }"
+     buffer_queue_full_action "#{ENV['BUFFER_QUEUE_FULL_ACTION'] || 'block'}"
+     flush_at_shutdown "#{ENV['FLUSH_AT_SHUTDOWN'] || 'false'}"
+
+     write_operation 'create'
+
+     # 2 ^ 31
+     request_timeout 2147483648
+   </store>
+   #@include ../dynamic/output-remote-syslog.conf
+   #@include ../user/output-extra-*.conf
+   #@include ../user/secure-forward.conf
+</match>
+# no post - applications.conf matches everything left
+##
+</label>

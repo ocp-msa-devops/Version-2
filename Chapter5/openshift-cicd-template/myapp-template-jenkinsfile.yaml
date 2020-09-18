@@ -1,0 +1,43 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+labels:
+  template: myapp-jenkinsfile
+metadata:
+  name: myapp-jenkinsfile
+objects:
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    labels:
+      application: ${PIPELINE_NAME}-jenkinsfile
+    name: ${PIPELINE_NAME}-jenkinsfile
+  spec:
+    source:
+      contextDir: /Chapter5/openshift-cicd-template
+      git:
+        ref: ${SOURCE_REF}
+        uri: ${SOURCE_URL}
+      type: Git
+    strategy:
+      jenkinsPipelineStrategy:
+        jenkinsfilePath: Jenkinsfile
+      type: JenkinsPipeline
+    triggers:
+    - github:
+        secret: kJZLvfQr3hZg
+      type: GitHub
+    - generic:
+        secret: kJZLvfQr3hZg
+      type: Generic
+parameters:
+- description: The name for the pipeline.
+  name: PIPELINE_NAME
+  required: true
+  value: myapp-tasks
+- description: Git source URI for Jenkinsfile
+  name: SOURCE_URL
+  required: true
+  value: https://github.com/ocp-msa-devops/Version-2.git
+- description: Git branch/tag reference for Jenkinsfile
+  name: SOURCE_REF
+  value: master
